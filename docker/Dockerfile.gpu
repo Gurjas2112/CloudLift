@@ -10,7 +10,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends python3.12 pyth
     && rm -rf /var/lib/apt/lists/* && python3.12 -m venv /opt/venv
 
 WORKDIR /app
-RUN pip install torch==2.6.0 torchvision==0.21.0 --index-url https://download.pytorch.org/whl/cu124
+RUN pip install --retries 10 --timeout 120 torch==2.6.0 torchvision==0.21.0 --index-url https://download.pytorch.org/whl/cu124
 COPY requirements.txt ./
 RUN pip install -r requirements.txt
 

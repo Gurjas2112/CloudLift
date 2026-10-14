@@ -14,7 +14,9 @@ also gets a **per-pixel uncertainty** (σ) band.
 > forward pass (no sampling, no MC-dropout, no ensembles), so the same input gives byte-identical output.
 > Metrics are computed by the pipeline, never typed in.
 
-**Live demo (CPU, synthetic scenes):** https://huggingface.co/spaces/gurjasgandhi76/cloudlift
+**Live demo:** https://huggingface.co/spaces/gurjasgandhi76/cloudlift is the full operator console as a Docker Space on
+free CPU hardware. Four synthetic hero scenes replay instantly from the build-time bake, and any AOI typed in runs the live
+7-stage pipeline on CPU (about 1–2.5 s per 256² tile).
 
 ---
 
@@ -176,7 +178,9 @@ docker compose -f docker-compose.yml -f docker-compose.gpu.yml up --build   # NV
 
 `docker/Dockerfile.cpu` (python:3.12-slim + CPU torch) bakes the demo scenes at build time.
 `docker/Dockerfile.gpu` uses `nvidia/cuda:12.6.3-runtime-ubuntu24.04` (Python 3.12) + the cu124 wheel.
-The public Space is built from `deploy/hf_space/` with `python scripts/deploy_hf_space.py --repo <user>/cloudlift`.
+The live Space is deployed with `python scripts/deploy_hf_space.py --repo <user>/cloudlift`, which uses `deploy/hf_space/`.
+Docker/Gradio Spaces on free CPU need a Hugging Face PRO account. Without PRO, `python scripts/build_static_demo.py --upload
+<user>/cloudlift` publishes a free static page of the pre-computed hero scenes instead.
 
 ## Determinism
 

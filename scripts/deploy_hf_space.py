@@ -47,7 +47,11 @@ def main() -> None:
         api = HfApi()
         api.create_repo(a.repo, repo_type="space", space_sdk="docker", private=a.private, exist_ok=True)
         api.upload_folder(
-            folder_path=stage, repo_id=a.repo, repo_type="space", commit_message="Deploy CloudLift CPU demo"
+            folder_path=stage,
+            repo_id=a.repo,
+            repo_type="space",
+            commit_message="Deploy CloudLift live console (Docker, CPU)",
+            delete_patterns=["*"],  # mirror the staged folder (e.g. replaces a previous static demo)
         )
     print(f"https://huggingface.co/spaces/{a.repo}")
 
