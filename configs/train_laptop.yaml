@@ -1,0 +1,14 @@
+# 6 GB RTX 3060 Laptop profile. Merged on top of default.yaml.
+device: cuda
+data:
+  tile: 256
+  input_t: 2
+model:
+  size: full
+  gradient_checkpointing: true
+train:
+  batch_size: 1
+  accumulate_grad_batches: 8
+  precision: 16-mixed
+  num_workers: 4
+  max_epochs: 20

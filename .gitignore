@@ -1,0 +1,26 @@
+# environments / secrets
+.venv/
+venv/
+.env
+# data & artefacts (never committed; data must stay in-country)
+data/
+cache/
+results/
+checkpoints/
+lightning_logs/
+*.pth
+*.pth.tar
+*.ckpt
+# python
+__pycache__/
+*.py[cod]
+*.egg-info/
+build/
+dist/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+# gradio
+.gradio/
+flagged/

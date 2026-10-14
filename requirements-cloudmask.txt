@@ -1,0 +1,3 @@
+# Optional: learned cloud/shadow masking. Without it CloudLift uses its deterministic
+# threshold+morphology baseline (cloudlift/preprocess/cloudmask.py).
+omnicloudmask>=1.0

@@ -1,0 +1,14 @@
+# Rented A100 / L40S profile (India region). Merged on top of default.yaml.
+device: cuda
+data:
+  tile: 256             # 512 is supported if VRAM allows; regenerate the tile cache after changing it
+  input_t: 2
+model:
+  size: full
+  gradient_checkpointing: false
+train:
+  batch_size: 8
+  accumulate_grad_batches: 1
+  precision: bf16-mixed
+  num_workers: 8
+  max_epochs: 20

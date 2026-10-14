@@ -1,0 +1,46 @@
+# CloudLift default configuration. Every output GeoTIFF carries the hash of the resolved config.
+seed: 0
+device: auto            # auto | cpu | cuda
+
+paths:
+  data_root: data/raw
+  cache_root: cache
+  results_root: results
+  weights: null         # pretrained UnCRtainTS .pth.tar; null => tiny UNTRAINED model (loud warning)
+
+data:
+  tile: 256
+  overlap: 32
+  input_t: 2            # time steps fed to UnCRtainTS: [temporal reference, current cloudy pass]
+  preproc_version: v1   # cache folder name; bump when preprocessing changes
+
+model:
+  size: tiny            # tiny (tests / CPU demo) | full (UnCRtainTS paper config, needed for pretrained weights)
+  covmode: diag
+  gradient_checkpointing: false
+
+loss:
+  l1: 1.0
+  ssim: 0.2
+  sam: 0.1
+  nll: 0.05
+  cloud_weight: 3.0     # up-weight cloud/shadow pixels in L1
+
+cloudmask:
+  method: auto          # auto (OmniCloudMask if installed, else baseline) | omnicloudmask | baseline
+
+infer:
+  batch_size: 1
+  amp: true             # autocast fp16 on CUDA only; CPU always fp32
+
+train:
+  batch_size: 1
+  accumulate_grad_batches: 1
+  precision: "32-true"
+  num_workers: 0
+  max_epochs: 2
+  lr: 1.0e-3
+  lr_decay: 0.8
+  val_fraction: 0.2
+  cloud_fraction_min: 0.2
+  cloud_fraction_max: 0.7

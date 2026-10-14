@@ -1,0 +1,10 @@
+# Optional conda route (conda-forge GDAL/Rasterio). The default setup uses a venv because
+# Rasterio wheels on PyPI bundle GDAL; see README.
+name: cloudlift
+channels:
+  - conda-forge
+dependencies:
+  - python=3.12
+  - gdal
+  - rasterio
+  - pip
