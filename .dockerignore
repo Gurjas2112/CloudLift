@@ -1,0 +1,13 @@
+.git
+.venv
+.cursor
+data
+cache
+results
+checkpoints
+exports
+**/__pycache__
+.pytest_cache
+.mypy_cache
+.ruff_cache
+third_party/UnCRtainTS/architecture.png

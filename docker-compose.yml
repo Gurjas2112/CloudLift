@@ -1,0 +1,22 @@
+# Local deployment: FastAPI service (:8000) + Gradio console (:7860), CPU image.
+#   docker compose up --build
+# GPU: docker compose -f docker-compose.yml -f docker-compose.gpu.yml up --build
+services:
+  api:
+    build: { context: ., dockerfile: docker/Dockerfile.cpu }
+    image: cloudlift:cpu
+    command: ["cloudlift", "serve", "--host", "0.0.0.0", "--port", "8000"]
+    ports: ["8000:8000"]
+    environment: [CLOUDLIFT_CONFIG=configs/demo.yaml]
+    volumes:
+      - ./data/raw:/app/data/raw
+      - ./results:/app/results
+    restart: unless-stopped
+  console:
+    image: cloudlift:cpu
+    depends_on: [api]
+    ports: ["7860:7860"]
+    environment: [CLOUDLIFT_CONFIG=configs/demo.yaml]
+    volumes:
+      - ./data/raw:/app/data/raw
+    restart: unless-stopped

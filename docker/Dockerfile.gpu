@@ -1,0 +1,27 @@
+# CloudLift GPU image: CUDA 12.6 runtime base (Ubuntu 24.04 ships Python 3.12); torch cu124 wheel bundles its own CUDA 12.4 libs.
+#   docker build -f docker/Dockerfile.gpu -t cloudlift:gpu .
+#   docker run --gpus all -p 7860:7860 cloudlift:gpu
+FROM nvidia/cuda:12.6.3-runtime-ubuntu24.04
+
+ENV DEBIAN_FRONTEND=noninteractive PYTHONDONTWRITEBYTECODE=1 PYTHONUNBUFFERED=1 PIP_NO_CACHE_DIR=1 \
+    CLOUDLIFT_DEVICE=cuda CLOUDLIFT_HOST=0.0.0.0 CLOUDLIFT_PORT=7860 GRADIO_ANALYTICS_ENABLED=False \
+    PATH=/opt/venv/bin:$PATH
+RUN apt-get update && apt-get install -y --no-install-recommends python3.12 python3.12-venv libexpat1 \
+    && rm -rf /var/lib/apt/lists/* && python3.12 -m venv /opt/venv
+
+WORKDIR /app
+RUN pip install torch==2.6.0 torchvision==0.21.0 --index-url https://download.pytorch.org/whl/cu124
+COPY requirements.txt ./
+RUN pip install -r requirements.txt
+
+COPY pyproject.toml README.md LICENSE ./
+COPY cloudlift ./cloudlift
+COPY configs ./configs
+COPY scripts ./scripts
+COPY assets ./assets
+COPY third_party/UnCRtainTS/model/src/backbones ./third_party/UnCRtainTS/model/src/backbones
+RUN pip install --no-deps -e .
+
+EXPOSE 7860 8000
+# hero scenes are baked on first start (needs the GPU, unavailable at build time)
+CMD ["sh", "-c", "python scripts/bake_demo.py && python -m cloudlift.ui.console"]

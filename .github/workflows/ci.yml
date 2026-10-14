@@ -1,0 +1,33 @@
+name: ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+      - name: Install (CPU torch)
+        run: |
+          python -m pip install --upgrade pip
+          pip install torch==2.6.0 torchvision==0.21.0 --index-url https://download.pytorch.org/whl/cpu
+          pip install -r requirements-dev.txt
+          pip install --no-deps -e .
+      - name: Ruff
+        run: |
+          ruff check cloudlift tests scripts
+          ruff format --check cloudlift tests scripts
+      - name: Mypy (strict on cloudlift/)
+        run: mypy
+      - name: Pytest (CPU, synthetic fixture)
+        run: pytest -q -p no:cacheprovider
