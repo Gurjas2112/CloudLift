@@ -1,0 +1,4 @@
+{
+  "Windows-torch2.6.0+cu124-numpy2.5.2-cpu": "ef97701f64eaccf49d24ca587b39a013e655f7629f41128a12bcd3112b65a47f",
+  "Windows-torch2.6.0+cu124-numpy2.5.2-cuda": "a5b95d89ab7127a526242dd998c0ab1a3ea2eec62100d7326008dc8462d56fbe"
+}
