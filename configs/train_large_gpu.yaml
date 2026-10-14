@@ -1,4 +1,4 @@
-# Rented A100 / L40S profile (India region). Merged on top of default.yaml.
+# GPUs with 24 GB+ VRAM (e.g. A100, L40S, RTX 4090). Merged on top of default.yaml.
 device: cuda
 data:
   tile: 256             # 512 is supported if VRAM allows; regenerate the tile cache after changing it

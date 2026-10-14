@@ -3,6 +3,7 @@ import json
 import shutil
 
 import numpy as np
+import pytest
 import rasterio
 import yaml
 
@@ -123,3 +124,68 @@ def test_batch_resumable(scene_root, tmp_path, capsys):
     assert cli_main(args) == 0
     second = capsys.readouterr().out
     assert '"processed": 0' in second and '"skipped": 1' in second
+
+
+def test_any_sensor_band_order_and_scale(scene_root, four_band_scene, cfg, tmp_path):
+    """A 4-band uint16 B,G,R,NIR product (x10000) gives the same reconstruction as the 3-band float file."""
+    from cloudlift.io.sources import save_scene
+
+    d = scene_root / "SYN_TEST_0001"
+    opt, ref = four_band_scene
+    meta = {
+        "bands": [2, 3, 4],
+        "scale": "auto",
+        "sar_units": "unit",
+        "acquired": "2026-07-15",
+        "reference_acquired": "2026-02-10",
+    }
+    blobs = {"liss4": opt.read_bytes(), "reference": ref.read_bytes(), "sar": (d / "sar.tif").read_bytes()}
+    four = save_scene(tmp_path / "up4", blobs, meta)
+    blobs3 = {
+        "liss4": (d / "liss4.tif").read_bytes(),
+        "reference": (d / "reference.tif").read_bytes(),
+        "sar": (d / "sar.tif").read_bytes(),
+    }
+    three = save_scene(
+        tmp_path / "up3", blobs3, {k: v for k, v in meta.items() if k not in ("bands", "scale")}
+    )
+    r4 = pipeline.run(four, None, cfg, out_dir=tmp_path / "r4")
+    r3 = pipeline.run(three, None, cfg, out_dir=tmp_path / "r3")
+    assert r4.extra["radiometry"]["optical"] == {"bands": [2, 3, 4], "scale": 10000.0}
+    a, b = np.load(r4.out_dir / "recon.npy"), np.load(r3.out_dir / "recon.npy")
+    diff = np.abs(a - b)  # only uint16 quantisation differs (it can flip a few mask-edge pixels)
+    assert diff.mean() < 1e-3 and np.percentile(diff, 99.9) < 1e-2
+    with rasterio.open(r4.geotiff) as ds:
+        assert ds.descriptions == ("Green", "Red", "NIR", "uncertainty")
+        assert '"bands": [2, 3, 4]' in ds.tags()["INPUT_RADIOMETRY"]
+
+
+def test_cli_infer_direct_files(four_band_scene, tmp_path, monkeypatch):
+    opt, _ = four_band_scene
+    monkeypatch.chdir(tmp_path)
+    cfg_path = tmp_path / "c.yaml"
+    cfg_path.write_text(yaml.safe_dump({"device": "cpu", "model": {"size": "tiny"}}), encoding="utf-8")
+    assert (
+        cli_main(
+            [
+                "infer",
+                "--config",
+                str(cfg_path),
+                "--optical",
+                str(opt),
+                "--bands",
+                "2,3,4",
+                "--out",
+                str(tmp_path / "out"),
+            ]
+        )
+        == 0
+    )
+    res = json.loads((tmp_path / "out" / "result.json").read_text(encoding="utf-8"))
+    assert res["extra"]["mode"] == "real-scene" and res["extra"]["coregistration"]["sar"] == "missing"
+    with rasterio.open(res["geotiff"]) as ds:
+        assert ds.count == 4
+        u = ds.read(4)
+    mask = np.load(tmp_path / "out" / "recon.npy")  # exists
+    assert mask.shape[0] == 3
+    assert u.max() == pytest.approx(pipeline.UNCERTAINTY_MAX)  # no SAR -> sigma = max under cloud

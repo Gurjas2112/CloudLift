@@ -1,0 +1,16 @@
+# No GPU: small model, short schedule, so a CPU-only machine can complete a fine-tune.
+# Expect hours, not minutes, for real datasets; use a GPU profile when one is available.
+device: cpu
+data:
+  tile: 128
+  input_t: 2
+  preproc_version: v1-cpu128
+model:
+  size: tiny
+  gradient_checkpointing: false
+train:
+  batch_size: 4
+  accumulate_grad_batches: 1
+  precision: 32-true
+  num_workers: 2
+  max_epochs: 5

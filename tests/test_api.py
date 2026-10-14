@@ -95,3 +95,20 @@ def test_errors(client):
     assert client.get("/jobs/nope").status_code == 404
     assert client.post("/reconstruct", json={"scene_id": "MISSING", "source": "local"}).status_code == 404
     assert client.post("/reconstruct", files={"sar": ("s.tif", b"x", "image/tiff")}).status_code == 422
+    bad = client.post("/reconstruct", files={"liss4": ("l.tif", b"not a tiff", "image/tiff")})
+    assert bad.status_code == 422 and "GeoTIFF" in bad.json()["detail"]
+
+
+def test_upload_any_sensor_with_band_fields(client, four_band_scene):
+    opt, ref = four_band_scene
+    files = {
+        "liss4": ("o.tif", opt.read_bytes(), "image/tiff"),
+        "reference": ("r.tif", ref.read_bytes(), "image/tiff"),
+    }
+    r = client.post("/reconstruct", files=files, data={"bands": "2,3,4", "scale": "10000"})
+    assert r.status_code == 202
+    j = _wait(client, r.json()["job_id"])
+    assert j["status"] == "done"
+    assert j["result"]["extra"]["radiometry"]["optical"] == {"bands": [2, 3, 4], "scale": 10000.0}
+    bad = client.post("/reconstruct", files=files, data={"bands": "2,3,7"})
+    assert bad.status_code == 422 and "out of range" in bad.json()["detail"]

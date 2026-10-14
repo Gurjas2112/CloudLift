@@ -28,6 +28,15 @@ from cloudlift.io.sources import LocalFolderSource, Scene
 CHROME, PANEL, TEAL, AMBER, RED, TEXT = "#0C121D", "#151E2D", "#12B09C", "#EF9F27", "#E24B4A", "#E7EEF6"
 DEMO_CACHE = Path("cache/demo")
 DEMO_SCENES = Path("data/demo_scenes")
+UPLOADS = Path("data/uploads")
+
+# SYNTHETIC demo scenes generated on first launch when no other scene exists: (id, seed, cloud fraction)
+HEROES = [
+    ("HERO_BRAHMAPUTRA_01", 101, 0.25),
+    ("HERO_KAMRUP_02", 102, 0.40),
+    ("HERO_HILLS_03", 103, 0.55),
+    ("HERO_MONSOON_04", 104, 0.70),
+]
 
 # console stage list (spec) -> pipeline stage numbers that complete it
 CONSOLE_STAGES = [
@@ -38,6 +47,9 @@ CONSOLE_STAGES = [
     ("NDVI validation", 6),
     ("Export GeoTIFF", 7),
 ]
+
+# The console is designed dark-only; force Gradio's dark theme regardless of the OS setting.
+FORCE_DARK = "() => { document.body.classList.add('dark'); document.documentElement.classList.add('dark'); }"
 
 CSS = f"""
 :root, .dark {{ --cl-chrome:{CHROME}; --cl-panel:{PANEL}; --cl-teal:{TEAL}; --cl-amber:{AMBER};
@@ -50,6 +62,7 @@ CSS = f"""
 .cl-brand b {{ color:{TEAL}; }}
 .cl-dim {{ color:#8a9bb3; font-size:12px; letter-spacing:1px; }}
 .cl-live {{ color:{TEAL}; font-size:12px; }}
+.cl-kv, .cl-stage, .cl-tile .v, .cl-big, .cl-card, .cl-queue {{ color:{TEXT} !important; }}
 .cl-kv {{ font-size:13px; line-height:1.5; margin-bottom:8px; }}
 .cl-kv .k {{ color:#8a9bb3; font-size:11px; text-transform:uppercase; letter-spacing:1px; }}
 .cl-card {{ background:{CHROME}; border:1px solid #22304a; border-radius:8px; padding:10px; }}
@@ -89,9 +102,54 @@ def console_config() -> Config:
     return cfg
 
 
+def ensure_demo_scenes(size: int = 768) -> None:
+    """Generate the synthetic hero scenes if missing (a few seconds each), so a fresh install works."""
+    from cloudlift.io.synthetic import generate_scene
+
+    for sid, seed, frac in HEROES:
+        if not (DEMO_SCENES / sid / "meta.json").exists():
+            generate_scene(DEMO_SCENES, sid, size=size, seed=seed, cloud_fraction=frac)
+
+
 def sources(cfg: Config) -> list[LocalFolderSource]:
-    out = [LocalFolderSource(cfg.paths.data_root), LocalFolderSource(DEMO_SCENES)]
+    out = [LocalFolderSource(UPLOADS), LocalFolderSource(cfg.paths.data_root), LocalFolderSource(DEMO_SCENES)]
     return [s for s in out if s.list_scenes()]
+
+
+SCALE_CHOICES: dict[str, str | int] = {
+    "auto (detect)": "auto",
+    "10-bit DN (÷1023)": 1023,
+    "÷10000": 10000,
+    "already 0–1": 1,
+}
+MAX_FULL_SCENE_PX = 4096 * 4096  # larger scenes need an AOI crop (keeps RAM bounded)
+
+
+def add_uploaded_scene(
+    liss4: str | None,
+    sar: str | None,
+    reference: str | None,
+    acquired: str,
+    reference_acquired: str,
+    bands: str = "1,2,3",
+    scale: str = "auto (detect)",
+) -> Scene:
+    """Validate and store user GeoTIFFs (file paths from the UI) as a new scene."""
+    from cloudlift.io.sources import UploadError, save_scene
+
+    files = {"liss4": liss4, "sar": sar, "reference": reference}
+    blobs = {k: Path(v).read_bytes() for k, v in files.items() if v}
+    band_list = [b for b in (bands or "1,2,3").replace(" ", "").split(",") if b]
+    if not all(b.isdigit() for b in band_list):
+        raise UploadError(f"band order must be three numbers like 2,3,4 (got {bands!r})")
+    meta = {
+        "acquired": acquired.strip(),
+        "reference_acquired": reference_acquired.strip(),
+        "source": "user upload",
+        "bands": [int(b) for b in band_list],
+        "scale": SCALE_CHOICES.get(scale, "auto"),
+    }
+    return save_scene(UPLOADS, blobs, meta)
 
 
 def scene_choices(cfg: Config) -> list[str]:
@@ -136,12 +194,33 @@ def scene_panel(scene: Scene | None, cfg: Config) -> str:
     if scene is None:
         return "<div class='cl-kv'>No scene selected.</div>"
     syn = "<span class='cl-badge syn'>SYNTHETIC FIXTURE</span>" if scene.synthetic else ""
+    upload = scene.meta.get("source") == "user upload"
+    w, h = scene_size(scene)
+    bands = scene.meta.get("bands", [1, 2, 3])
+    sensor = (
+        f"User optical GeoTIFF · G/R/NIR = bands {', '.join(str(b) for b in bands)}"
+        if upload
+        else "LISS-IV · 5.8 m · G/R/NIR"
+    )
+    missing = "<i>missing (higher uncertainty)</i>"
+    ref_txt = (
+        html.escape(str(scene.meta.get("reference_acquired") or "provided")) if scene.reference else missing
+    )
+    sar_txt = ("C-band, 2-pol" if upload else "EOS-04 / RISAT-1A · C-band") if scene.sar else missing
+    src_txt = (
+        "User-supplied files, kept on this server"
+        if upload
+        else "Bhoonidhi (NRSC/ISRO) · Indian Space Policy 2023"
+    )
     rows = [
-        ("Scene", f"{html.escape(scene.scene_id)}{syn}<br>LISS-IV · 5.8 m · G/R/NIR"),
+        (
+            "Scene",
+            f"{html.escape(scene.scene_id)}{syn}<br>{sensor}<br><span class='cl-dim'>{w} × {h} px</span>",
+        ),
         ("Acquired", html.escape(scene.acquired)),
-        ("Temporal reference", html.escape(str(scene.meta.get("reference_acquired", "—")))),
-        ("Auxiliary SAR", "EOS-04 / RISAT-1A · C-band" + ("" if scene.sar else " — <i>missing</i>")),
-        ("Source · compliance", "Bhoonidhi (NRSC/ISRO) · Indian Space Policy 2023"),
+        ("Temporal reference", ref_txt),
+        ("Auxiliary SAR", sar_txt),
+        ("Source · compliance", src_txt),
     ]
     return "".join(f"<div class='cl-kv'><div class='k'>{k}</div>{v}</div>" for k, v in rows)
 
@@ -230,12 +309,25 @@ def _limits(recon: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
     return stretch_limits(recon, 1.0, 99.0)
 
 
-def preview_cloudy(scene: Scene) -> np.ndarray:
+def scene_size(scene: Scene) -> tuple[int, int]:
     from cloudlift.io import geotiff
-    from cloudlift.io.radiometry import optical_to_unit
 
-    raw, _ = geotiff.read(scene.optical)
-    opt = optical_to_unit(raw, scene.meta)
+    m = geotiff.read_meta(scene.optical)
+    return m.width, m.height
+
+
+def preview_cloudy(scene: Scene, max_px: int = 1024) -> np.ndarray:
+    """Decimated false-colour preview, so even full-size scenes load quickly."""
+    import rasterio
+
+    from cloudlift.io.radiometry import optical_to_unit
+    from cloudlift.pipeline import radiometry
+
+    opt_meta, _ = radiometry(scene)
+    with rasterio.open(scene.optical) as ds:
+        f = max(1, -(-max(ds.width, ds.height) // max_px))
+        raw = ds.read(opt_meta["bands"], out_shape=(3, max(1, ds.height // f), max(1, ds.width // f)))
+    opt = optical_to_unit(raw, opt_meta)
     return fcc(opt, stretch_limits(opt, 1.0, 60.0))
 
 
@@ -260,6 +352,8 @@ def slider_images(res: dict[str, Any], show_conf: bool) -> tuple[np.ndarray, np.
 # --------------------------------------------------------------------------------------------
 def build(cfg: Config | None = None) -> gr.Blocks:
     cfg = cfg or console_config()
+    if not scene_choices(cfg):
+        ensure_demo_scenes()
     choices = scene_choices(cfg)
 
     with gr.Blocks(title="CloudLift — operator console") as demo:
@@ -279,10 +373,41 @@ def build(cfg: Config | None = None) -> gr.Blocks:
                 info = gr.HTML(scene_panel(find_scene(cfg, choices[0]) if choices else None, cfg))
                 gr.HTML(model_badge(cfg))
                 obstruction = gr.HTML(obstruction_card(None))
+                with gr.Accordion("Use your own scene", open=False):
+                    gr.Markdown(
+                        "GeoTIFFs with a CRS. The **optical** file (LISS-IV, or any sensor with Green, Red and "
+                        "NIR bands) is required. SAR (VV, VH) and an earlier cloud-free pass of the same area "
+                        "are optional but strongly improve results. Files stay on this server."
+                    )
+                    up_liss4 = gr.File(
+                        label="Optical, cloudy (3+ bands incl. Green, Red, NIR)",
+                        file_types=[".tif", ".tiff"],
+                        type="filepath",
+                    )
+                    up_sar = gr.File(
+                        label="SAR, optional (2 bands)", file_types=[".tif", ".tiff"], type="filepath"
+                    )
+                    up_ref = gr.File(
+                        label="Earlier cloud-free pass, optional (3 bands)",
+                        file_types=[".tif", ".tiff"],
+                        type="filepath",
+                    )
+                    with gr.Row():
+                        up_bands = gr.Textbox(
+                            label="Band order (G,R,NIR)", value="1,2,3", info="e.g. 2,3,4 for B,G,R,NIR files"
+                        )
+                        up_scale = gr.Dropdown(
+                            choices=list(SCALE_CHOICES), value="auto (detect)", label="Scaling"
+                        )
+                    with gr.Row():
+                        up_acq = gr.Textbox(label="Acquired (YYYY-MM-DD)", placeholder="optional")
+                        up_ref_acq = gr.Textbox(label="Reference acquired", placeholder="optional")
+                    up_btn = gr.Button("Add scene")
+                    up_msg = gr.Markdown("")
 
             with gr.Column(scale=3, min_width=420):
                 slider = gr.ImageSlider(
-                    label="Cloudy  ↔  Reconstructed  (LISS-IV FCC: NIR/Red/Green)",
+                    label="Cloudy  ↔  Reconstructed  (false colour: NIR/Red/Green)",
                     type="numpy",
                     max_height=640,
                     slider_position=50,
@@ -351,6 +476,20 @@ def build(cfg: Config | None = None) -> gr.Blocks:
                         queue_html(cfg),
                     )
                     return
+            w, h = scene_size(sc)
+            if aoi is None and w * h > MAX_FULL_SCENE_PX:
+                yield (
+                    gr.update(),
+                    stages_html(set(), None),
+                    metrics_html(None),
+                    obstruction_card(None),
+                    gr.update(interactive=False),
+                    None,
+                    f"This scene is {w} × {h} px. Enter an AOI to crop it (e.g. `point:lat,lon,5km`), "
+                    "or process the full scene with the CLI or API.",
+                    queue_html(cfg),
+                )
+                return
             hit = baked(cfg, sc) if aoi is None else None
             done: set[int] = set()
             if hit is not None:
@@ -426,7 +565,7 @@ def build(cfg: Config | None = None) -> gr.Blocks:
                 done = {n for _, n in CONSOLE_STAGES}
                 source_note = f"Live run `{res['run_id']}` on {res['extra'].get('device', '?')}."
             if res.get("synthetic"):
-                source_note += " **Synthetic fixture scene**: not real LISS-IV data."
+                source_note += " **Synthetic fixture scene**: not real satellite data."
             yield (
                 slider_images(res, show),
                 stages_html(done, None),
@@ -436,6 +575,28 @@ def build(cfg: Config | None = None) -> gr.Blocks:
                 res,
                 source_note,
                 queue_html(cfg, sid),
+            )
+
+        def on_upload(
+            liss4: str | None,
+            sar: str | None,
+            ref: str | None,
+            acq: str,
+            ref_acq: str,
+            bands: str,
+            scale: str,
+        ) -> tuple[Any, str]:
+            from cloudlift.io.sources import UploadError
+
+            try:
+                sc = add_uploaded_scene(liss4, sar, ref, acq or "", ref_acq or "", bands, scale)
+            except UploadError as e:
+                return gr.update(), f"Upload rejected: {e}"
+            missing = [n for n, p in (("SAR", sar), ("earlier pass", ref)) if not p]
+            extra = f" Missing {', '.join(missing)}: uncertainty will be higher." if missing else ""
+            return (
+                gr.update(choices=scene_choices(cfg), value=sc.scene_id),
+                f"Added `{sc.scene_id}`. Press **Initiate recovery**.{extra}",
             )
 
         def on_conf(show: bool, res: dict[str, Any] | None) -> Any:
@@ -448,6 +609,11 @@ def build(cfg: Config | None = None) -> gr.Blocks:
         scene_dd.change(on_scene, scene_dd, [info, slider, obstruction, export, stages, metrics, state])
         go.click(recover, [scene_dd, aoi_tb, conf], outs)
         conf.change(on_conf, [conf, state], slider)
+        up_btn.click(
+            on_upload,
+            [up_liss4, up_sar, up_ref, up_acq, up_ref_acq, up_bands, up_scale],
+            [scene_dd, up_msg],
+        )
         reset.click(
             on_reset, scene_dd, [info, slider, obstruction, export, stages, metrics, state, note, conf]
         )
@@ -457,12 +623,14 @@ def build(cfg: Config | None = None) -> gr.Blocks:
 
 def launch(host: str = "127.0.0.1", port: int = 7860) -> None:
     cfg = console_config()
-    allowed = [str(Path(cfg.paths.results_root).resolve()), str(DEMO_CACHE.resolve())]
+    allowed = [str(Path(p).resolve()) for p in (cfg.paths.results_root, DEMO_CACHE, UPLOADS)]
+    ensure_demo_scenes()
     build(cfg).launch(
         server_name=host,
         server_port=port,
         css=CSS,
         theme=gr.themes.Base(),
+        js=FORCE_DARK,
         allowed_paths=allowed,
         footer_links=[],
     )

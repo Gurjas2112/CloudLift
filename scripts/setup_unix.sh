@@ -1,18 +1,22 @@
 #!/usr/bin/env bash
-# CloudLift setup for Linux / WSL2. Run from the repository root:
-#   bash scripts/setup_linux.sh [--cpu]
+# CloudLift setup for Linux, WSL2 and macOS. Run from the repository root:
+#   bash scripts/setup_unix.sh [--cpu]
+# macOS always uses CPU wheels (no CUDA).
 set -euo pipefail
 
 git submodule update --init --recursive
 
 TORCH_INDEX="https://download.pytorch.org/whl/cu124"
-[[ "${1:-}" == "--cpu" ]] && TORCH_INDEX="https://download.pytorch.org/whl/cpu"
+if [[ "${1:-}" == "--cpu" || "$(uname -s)" == "Darwin" ]] || ! command -v nvidia-smi >/dev/null 2>&1; then
+  TORCH_INDEX="https://download.pytorch.org/whl/cpu"
+fi
 
 if command -v conda >/dev/null 2>&1; then
   conda env create -f environment.yml || conda env update -f environment.yml
   PY="$(conda run -n cloudlift python -c 'import sys; print(sys.executable)')"
 else
-  [[ -d .venv ]] || python3.12 -m venv .venv
+  PYBIN="$(command -v python3.12 || command -v python3)"
+  [[ -d .venv ]] || "$PYBIN" -m venv .venv
   PY=".venv/bin/python"
 fi
 

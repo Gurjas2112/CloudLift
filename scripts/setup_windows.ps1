@@ -7,6 +7,7 @@ $ErrorActionPreference = "Stop"
 
 git submodule update --init --recursive
 
+if (-not (Get-Command nvidia-smi -ErrorAction SilentlyContinue)) { $Cpu = $true }  # no NVIDIA GPU -> CPU wheels
 $torchIndex = if ($Cpu) { "https://download.pytorch.org/whl/cpu" } else { "https://download.pytorch.org/whl/cu124" }
 
 if (Get-Command conda -ErrorAction SilentlyContinue) {
@@ -14,7 +15,9 @@ if (Get-Command conda -ErrorAction SilentlyContinue) {
     if (-not $?) { conda env update -f environment.yml }
     $py = (conda run -n cloudlift python -c "import sys; print(sys.executable)").Trim()
 } else {
-    if (-not (Test-Path .venv)) { py -3.12 -m venv .venv }
+    if (-not (Test-Path .venv)) {
+        if (Get-Command py -ErrorAction SilentlyContinue) { py -3.12 -m venv .venv } else { python -m venv .venv }
+    }
     $py = Join-Path (Resolve-Path .venv) "Scripts\python.exe"
 }
 

@@ -28,7 +28,14 @@ from cloudlift.eval import metrics as M
 from cloudlift.eval.report import json_safe, write_panels, write_report
 from cloudlift.io import geotiff
 from cloudlift.io.aoi import AOI
-from cloudlift.io.radiometry import optical_to_unit, sar_to_unit
+from cloudlift.io.radiometry import (
+    DEFAULT_BANDS,
+    band_indexes,
+    optical_to_unit,
+    resolve_scale,
+    sar_to_unit,
+    select_bands,
+)
 from cloudlift.io.sources import Scene
 from cloudlift.model.adapter import stack_inputs
 from cloudlift.model.uncrtaints_wrapper import CloudLiftNet, file_hash, load
@@ -130,31 +137,80 @@ def scene_window(scene: Scene, aoi: AOI | None) -> Window | None:
     return w.intersection(Window(0, 0, meta.width, meta.height))
 
 
+_RADIOMETRY: dict[tuple[str, str, str], tuple[dict[str, Any], dict[str, Any]]] = {}
+
+
+def radiometry(scene: Scene) -> tuple[dict[str, Any], dict[str, Any]]:
+    """Resolved (optical, reference) radiometry: band indexes and one scale per file.
+
+    The scale is chosen once per scene from a decimated read of the whole file, so an AOI crop
+    and the full scene are normalised identically, and the truth image shares the optical scale.
+    """
+    key = (str(scene.optical), str(scene.reference), json.dumps(scene.meta, sort_keys=True, default=str))
+    if key in _RADIOMETRY:
+        return _RADIOMETRY[key]
+    import rasterio
+
+    def resolve(path: Path, bands_key: str, scale_key: str) -> dict[str, Any]:
+        meta = {
+            "bands": scene.meta.get(bands_key, scene.meta.get("bands", DEFAULT_BANDS)),
+            "scale": scene.meta.get(scale_key, scene.meta.get("scale", "auto")),
+        }
+        with rasterio.open(path) as ds:
+            meta["bands"] = list(band_indexes(meta, ds.count))
+            f = max(1, max(ds.width, ds.height) // 512)
+            sample = ds.read(meta["bands"], out_shape=(3, max(1, ds.height // f), max(1, ds.width // f)))
+            if ds.nodata is not None:
+                sample = sample[:, ~np.all(sample == ds.nodata, axis=0)]
+        meta["scale"] = resolve_scale(sample, meta)
+        return meta
+
+    opt = resolve(scene.optical, "bands", "scale")
+    ref = resolve(scene.reference, "reference_bands", "reference_scale") if scene.reference else dict(opt)
+    if scene.reference and "reference_scale" not in scene.meta and "scale" in scene.meta:
+        ref["scale"] = opt["scale"]
+    _RADIOMETRY[key] = (opt, ref)
+    return opt, ref
+
+
 def ingest(scene: Scene, win: Window | None) -> tuple[geotiff.RasterMeta, np.ndarray, np.ndarray]:
-    """Stage 1: read the optical pass (optionally a window) as [0,1] reflectance + nodata mask."""
+    """Stage 1: read the optical pass (optionally a window) as [0,1] Green/Red/NIR + nodata mask."""
+    opt_meta, _ = radiometry(scene)
     raw, meta = geotiff.read(scene.optical, window=win)
     nodata_px = np.zeros(raw.shape[1:], bool)
     if meta.nodata is not None:
         nodata_px = np.all(raw == meta.nodata, axis=0)
-    optical = optical_to_unit(raw, scene.meta)
+    optical = optical_to_unit(select_bands(raw, opt_meta), opt_meta)
     optical[:, nodata_px] = 0.0
     return meta, optical, nodata_px
+
+
+def read_truth(scene: Scene, win: Window | None) -> np.ndarray | None:
+    """Cloud-free truth (synthetic fixtures, or user-supplied ``clean.tif``) on the optical scale."""
+    if scene.clean is None:
+        return None
+    opt_meta, _ = radiometry(scene)
+    raw, _ = geotiff.read(scene.clean, window=win)
+    return optical_to_unit(select_bands(raw, opt_meta), opt_meta)
 
 
 def coregister_inputs(
     scene: Scene, meta: geotiff.RasterMeta, optical: np.ndarray, nodata_px: np.ndarray, tile: int
 ) -> tuple[np.ndarray, np.ndarray, np.ndarray, dict[str, Any]]:
-    """Stage 2: SAR + temporal reference onto the LISS-IV grid; sub-pixel refine of the reference."""
+    """Stage 2: SAR + temporal reference onto the optical grid; sub-pixel refine of the reference."""
     h, w = optical.shape[1:]
     if scene.sar is not None:
         sar_raw, sar_valid = coregister.reproject_to_grid(scene.sar, meta)
-        sar = sar_to_unit(sar_raw, scene.meta) * sar_valid[None]
+        sar = sar_to_unit(sar_raw[:2], scene.meta) * sar_valid[None]
     else:
         sar, sar_valid = np.zeros((2, h, w), np.float32), np.zeros((h, w), bool)
-    info: dict[str, Any] = {"sar": "reprojected (geocoded; no cross-modal refinement)"}
+    info: dict[str, Any] = {
+        "sar": "reprojected (geocoded; no cross-modal refinement)" if scene.sar else "missing"
+    }
     if scene.reference is not None:
+        _, ref_meta = radiometry(scene)
         ref_raw, ref_valid = coregister.reproject_to_grid(scene.reference, meta)
-        reference = optical_to_unit(ref_raw, scene.meta) * ref_valid[None]
+        reference = optical_to_unit(select_bands(ref_raw, ref_meta), ref_meta) * ref_valid[None]
         prelim = cloudmask.baseline_mask(optical).combined
         reference, est = coregister.refine_reference(
             optical, reference, ~prelim & ref_valid & ~nodata_px, tile=tile
@@ -333,8 +389,8 @@ def run(
     clean: np.ndarray | None = None
     baselines: dict[str, Any] = {}
     if scene.clean is not None:
-        clean_raw, _ = geotiff.read(scene.clean, window=win)
-        clean = optical_to_unit(clean_raw, scene.meta)
+        clean = read_truth(scene, win)
+        assert clean is not None
         det_iou = float("nan")
         if scene.mask_gt is not None:
             gt, _ = geotiff.read(scene.mask_gt, window=win)
@@ -404,7 +460,8 @@ def run(
         "INFERRED_PIXEL_FRACTION": f"{inferred_fraction:.6f}",
         "SYNTHETIC": str(scene.synthetic).lower(),
         "UNCERTAINTY_UNITS": "sigma, reflectance units; 0 = observed clear pixel; 1.0 = SAR missing under cloud",
-        "PRODUCT": "CloudLift analysis-ready cloud-free LISS-IV",
+        "PRODUCT": "CloudLift analysis-ready cloud-free optical (Green, Red, NIR)",
+        "INPUT_RADIOMETRY": json.dumps(radiometry(scene)[0]),
     }
     gpath = geotiff.write(
         out / f"{rid}_cloudfree.tif",
@@ -451,6 +508,7 @@ def run(
         synthetic=scene.synthetic,
         scene_id=scene.scene_id,
         extra={
+            "radiometry": {"optical": radiometry(scene)[0], "reference": radiometry(scene)[1]},
             "baselines": baselines,
             "coregistration": coreg_info,
             "mode": mode,

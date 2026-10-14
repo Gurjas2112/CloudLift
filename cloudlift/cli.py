@@ -17,6 +17,7 @@ from cloudlift.config import Config, load_config
 log = logging.getLogger("cloudlift")
 
 SYNTHETIC_ROOT = Path("data/synthetic")
+UPLOADS_ROOT = Path("data/uploads")
 
 
 def _print(obj: Any) -> None:
@@ -81,8 +82,25 @@ def cmd_infer(args: argparse.Namespace) -> int:
     from cloudlift.io.aoi import parse_aoi
 
     cfg = _cfg(args)
-    src = make_source(args.source, cfg)
-    scene = src.get_scene(args.scene) if args.scene else src.list_scenes()[0]
+    if args.optical:  # direct files: no folder convention needed
+        from cloudlift.io.sources import LocalFolderSource, save_scene
+
+        files = {"liss4": args.optical, "sar": args.sar, "reference": args.reference}
+        blobs = {k: Path(v).read_bytes() for k, v in files.items() if v}
+        meta = {
+            "bands": [int(b) for b in args.bands.split(",")],
+            "scale": args.scale,
+            "acquired": args.acquired or "",
+            "reference_acquired": args.reference_acquired or "",
+            "source": "user upload",
+        }
+        if args.sar_units:
+            meta["sar_units"] = args.sar_units
+        scene = save_scene(UPLOADS_ROOT, blobs, meta)
+        src: Any = LocalFolderSource(UPLOADS_ROOT)
+    else:
+        src = make_source(args.source, cfg)
+        scene = src.get_scene(args.scene) if args.scene else src.list_scenes()[0]
     aoi = parse_aoi(args.aoi, src.resolve_tile) if args.aoi else None
     res = pipeline.run(scene, aoi, cfg, out_dir=args.out)
     _print(
@@ -250,10 +268,21 @@ def main(argv: list[str] | None = None) -> int:
     sp.add_argument("--run")
     sp.add_argument("--epochs", type=int)
 
-    sp = sub.add_parser("infer", help="run the 7-stage pipeline on one scene")
+    sp = sub.add_parser(
+        "infer",
+        help="run the 7-stage pipeline on one scene (a scene folder, or your own files via --optical)",
+    )
     common(sp)
     sp.add_argument("--source", choices=["auto", "local", "synthetic"], default="auto")
     sp.add_argument("--scene")
+    sp.add_argument("--optical", help="your cloudy optical GeoTIFF (any sensor with Green, Red, NIR bands)")
+    sp.add_argument("--sar", help="optional 2-band SAR GeoTIFF (VV, VH), any grid")
+    sp.add_argument("--reference", help="optional earlier cloud-free optical GeoTIFF of the same area")
+    sp.add_argument("--bands", default="1,2,3", help="1-based Green,Red,NIR band indexes (default 1,2,3)")
+    sp.add_argument("--scale", default="auto", help="divisor to reflectance, or 'auto' (default)")
+    sp.add_argument("--sar-units", choices=["db", "linear", "unit"], help="default: detect")
+    sp.add_argument("--acquired", help="YYYY-MM-DD of the cloudy pass")
+    sp.add_argument("--reference-acquired", help="YYYY-MM-DD of the reference pass")
     sp.add_argument("--aoi", help="bbox:..., point:lat,lon,5km or tile:<ID>")
     sp.add_argument("--out")
 

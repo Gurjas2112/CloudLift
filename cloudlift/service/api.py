@@ -10,7 +10,6 @@
 
 from __future__ import annotations
 
-import hashlib
 import json
 import logging
 import os
@@ -192,29 +191,25 @@ class JobManager:
 
 def _save_upload(form: Any, root: Path) -> Any:
     """Store uploaded files in the LocalFolderSource convention under ``data/uploads/<hash>``."""
-    from cloudlift.io.sources import LocalFolderSource
+    from cloudlift.io.sources import UPLOAD_ROLES, UploadError, save_scene
 
-    files = {}
-    for name in ("liss4", "sar", "reference", "dem"):
-        f = form.get(name)
-        if f is not None and hasattr(f, "read"):
-            files[name] = f
-    if "liss4" not in files:
-        raise HTTPException(422, "upload requires at least a 'liss4' GeoTIFF")
-    blobs = {k: v.file.read() for k, v in files.items()}
-    h = hashlib.sha256()
-    for k in sorted(blobs):
-        h.update(k.encode())
-        h.update(hashlib.sha256(blobs[k]).digest())
-    sid = f"UPLOAD_{h.hexdigest()[:12]}"
-    d = root / sid
-    d.mkdir(parents=True, exist_ok=True)
-    for k, b in blobs.items():
-        (d / f"{k}.tif").write_bytes(b)
-    meta = form.get("meta")
-    if isinstance(meta, str) and meta:
-        (d / "meta.json").write_text(meta, encoding="utf-8")
-    return LocalFolderSource(root).get_scene(sid)
+    blobs = {k: f.file.read() for k in UPLOAD_ROLES if (f := form.get(k)) is not None and hasattr(f, "file")}
+    meta: dict[str, Any] = {}
+    raw = form.get("meta")
+    if isinstance(raw, str) and raw:
+        try:
+            meta = json.loads(raw)
+        except json.JSONDecodeError as e:
+            raise HTTPException(422, f"meta is not valid JSON: {e}") from e
+    for key in ("bands", "scale", "sar_units", "acquired", "reference_acquired"):
+        value = form.get(key)
+        if isinstance(value, str) and value:
+            meta[key] = value
+    meta.setdefault("source", "user upload")
+    try:
+        return save_scene(root, blobs, meta)
+    except UploadError as e:
+        raise HTTPException(422, str(e)) from e
 
 
 def create_app(cfg: Config | None = None, start_worker: bool = True) -> FastAPI:

@@ -25,8 +25,6 @@ import torch
 from torch.utils.data import DataLoader, Dataset
 
 from cloudlift.config import Config
-from cloudlift.io import geotiff
-from cloudlift.io.radiometry import optical_to_unit
 from cloudlift.io.sources import DataSource
 from cloudlift.model.adapter import stack_inputs
 from cloudlift.preprocess import cloudmask
@@ -41,7 +39,7 @@ def cache_dir(cfg: Config) -> Path:
 
 def build_tile_cache(source: DataSource, cfg: Config, *, max_obstructed: float = 0.01) -> Path:
     """Run stages 1-2 once per scene and write non-overlapping training tiles (idempotent)."""
-    from cloudlift.pipeline import coregister_inputs, ingest
+    from cloudlift.pipeline import coregister_inputs, ingest, read_truth
 
     root = cache_dir(cfg)
     index_path = root / "index.json"
@@ -58,10 +56,9 @@ def build_tile_cache(source: DataSource, cfg: Config, *, max_obstructed: float =
             continue
         meta, optical, nodata = ingest(scene, None)
         sar, _, reference, _ = coregister_inputs(scene, meta, optical, nodata, t)
-        if scene.clean is not None:
-            raw, _ = geotiff.read(scene.clean)
-            target = optical_to_unit(raw, scene.meta)
-            usable = ~nodata
+        truth = read_truth(scene, None)
+        if truth is not None:
+            target, usable = truth, ~nodata
         else:
             m = cloudmask.detect(optical, reference, cfg.cloudmask.method)
             target, usable = optical, ~(m.combined | nodata)

@@ -6,3 +6,4 @@ ruff>=0.5
 mypy>=1.10
 pre-commit>=3.7
 types-PyYAML
+playwright>=1.45  # scripts/capture_walkthrough.py (drives the installed Chrome)

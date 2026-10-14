@@ -1,5 +1,5 @@
 # Console / demo profile: full UnCRtainTS with weights fine-tuned on SYNTHETIC pairs only
-# (trained with `cloudlift train --config configs/train_laptop.yaml --source synthetic`).
+# (trained with `cloudlift train --config configs/train_small_gpu.yaml --source synthetic`).
 # These weights have never seen real LISS-IV; see MODEL_CARD.md.
 model:
   size: full

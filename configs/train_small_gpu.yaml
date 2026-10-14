@@ -1,4 +1,4 @@
-# 6 GB RTX 3060 Laptop profile. Merged on top of default.yaml.
+# GPUs with 6-8 GB VRAM (e.g. RTX 3060/4060 laptop). Merged on top of default.yaml.
 device: cuda
 data:
   tile: 256

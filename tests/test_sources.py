@@ -40,3 +40,30 @@ def test_synthetic_source_generates(tmp_path):
     src = SyntheticSource(tmp_path, n_scenes=2, size=128, seed=1)
     ids = [s.scene_id for s in src.list_scenes()]
     assert ids == ["SYN_NER_0001", "SYN_NER_0002"]
+
+
+def test_save_scene_validation(tmp_path):
+    import numpy as np
+    import pytest
+    from rasterio.transform import from_origin
+
+    from cloudlift.io import geotiff
+    from cloudlift.io.sources import UploadError, save_scene
+
+    ok = geotiff.write(
+        tmp_path / "ok.tif",
+        np.ones((3, 8, 8), np.float32),
+        crs="EPSG:4326",
+        transform=from_origin(90, 27, 0.01, 0.01),
+    )
+    nocrs = geotiff.write(
+        tmp_path / "nocrs.tif", np.ones((3, 8, 8), np.float32), crs=None, transform=from_origin(0, 8, 1, 1)
+    )
+    with pytest.raises(UploadError, match="coordinate reference system"):
+        save_scene(tmp_path / "u", {"liss4": nocrs.read_bytes()})
+    with pytest.raises(UploadError, match="unknown file role"):
+        save_scene(tmp_path / "u", {"liss4": ok.read_bytes(), "thermal": ok.read_bytes()})
+    with pytest.raises(UploadError, match="scale"):
+        save_scene(tmp_path / "u", {"liss4": ok.read_bytes()}, {"scale": "-3"})
+    sc = save_scene(tmp_path / "u", {"liss4": ok.read_bytes()}, {"bands": "3,2,1"})
+    assert sc.sar is None and sc.reference is None and sc.meta["bands"] == "3,2,1"

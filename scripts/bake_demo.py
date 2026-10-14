@@ -14,14 +14,7 @@ import json
 from cloudlift import pipeline
 from cloudlift.io.sources import LocalFolderSource
 from cloudlift.io.synthetic import generate_scene
-from cloudlift.ui.console import DEMO_CACHE, DEMO_SCENES, console_config
-
-HEROES = [  # (scene_id, seed, cloud fraction)
-    ("HERO_BRAHMAPUTRA_01", 101, 0.25),
-    ("HERO_KAMRUP_02", 102, 0.40),
-    ("HERO_HILLS_03", 103, 0.55),
-    ("HERO_MONSOON_04", 104, 0.70),
-]
+from cloudlift.ui.console import DEMO_CACHE, DEMO_SCENES, HEROES, console_config
 
 
 def main() -> None:

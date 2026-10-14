@@ -38,7 +38,7 @@ speckled C-band SAR derived from land cover and slope. It is a test bed, not a s
 
 Training: AdamW, lr 1e-3 with ×0.8 decay per epoch; loss = L1 (cloud/shadow pixels up-weighted ×3)
 + 0.2·(1−SSIM) + 0.1·SAM + 0.05·Gaussian NLL. Augmentation is geometric only (flips, 90° rotations),
-with no colour jitter, to preserve spectral integrity. Profile `configs/train_laptop.yaml`: 256 px tiles,
+with no colour jitter, to preserve spectral integrity. Profile `configs/train_small_gpu.yaml`: 256 px tiles,
 batch 1, accumulation 8, fp16 mixed precision, gradient checkpointing, RTX 3060 Laptop 6 GB.
 
 ## Evaluation protocol
@@ -57,7 +57,7 @@ batch 1, accumulation 8, fp16 mixed precision, gradient checkpointing, RTX 3060 
 ## Results
 
 Held-out **synthetic** test scenes (3 scenes, seeds 2000–2002), metrics over cloud + shadow pixels; source
-`results/demo_full_synthetic/eval_test/eval.json`. Shipped weights = epoch 9 (best val loss) of a `train_laptop` run interrupted in epoch 11.
+`results/demo_full_synthetic/eval_test/eval.json`. Shipped weights = epoch 9 (best val loss) of a `train_small_gpu` run interrupted in epoch 11.
 
 | method | PSNR (dB) | SSIM | SAM (°) | NDVI R² |
 |---|---|---|---|---|

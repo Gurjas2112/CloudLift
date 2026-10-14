@@ -1,18 +1,21 @@
-"""Data sources. Default: ``LocalFolderSource`` over files the user downloaded from Bhoonidhi.
+"""Data sources: scene folders on disk (default), synthetic fixtures, and user uploads.
 
-Folder convention (one folder per scene, under ``data/raw/``)::
+Folder convention (one folder per scene, under ``data/raw/``; uploads go to ``data/uploads/``)::
 
     data/raw/<scene_id>/
-        liss4.tif        required  LISS-IV (ResourceSat-2/2A) bands in order Green, Red, NIR
-        sar.tif          required  EOS-04 / RISAT-1A C-band, 2 polarisations (any grid; reprojected)
-        reference.tif    required  prior cloud-free LISS-IV pass of the same AOI (T-N days)
-        dem.tif          optional  CartoDEM
-        clean.tif        optional  cloud-free truth for full-reference evaluation (synthetic only)
-        mask_gt.tif      optional  ground-truth cloud mask (synthetic only)
-        meta.json        optional  {"acquired": "...", "reference_acquired": "...", "scale": 1023, ...}
+        liss4.tif        required  optical pass: LISS-IV or any GeoTIFF with Green, Red, NIR bands
+        sar.tif          optional  C-band SAR, 2 polarisations (VV, VH), any grid; reprojected
+        reference.tif    optional  earlier cloud-free optical pass of the same area
+        dem.tif          optional  DEM
+        clean.tif        optional  cloud-free truth for full-reference evaluation
+        mask_gt.tif      optional  ground-truth cloud mask
+        meta.json        optional  {"acquired": "2026-07-15", "reference_acquired": "2026-02-10",
+                                    "bands": [1, 2, 3], "scale": "auto", "sar_units": "db"}
 
-CloudLift never scrapes Bhoonidhi or bypasses its login: download scenes manually
-(Indian Space Policy 2023, data stays in-country) and drop them in this layout.
+``bands`` are the 1-based (Green, Red, NIR) indexes in the optical file (e.g. ``[2, 3, 4]`` for a
+Blue/Green/Red/NIR product). Without SAR or a reference the pipeline still runs, with higher
+uncertainty. For Bhoonidhi data, download scenes manually (Indian Space Policy 2023: data stays
+in-country); CloudLift never scrapes Bhoonidhi or bypasses its login.
 """
 
 from __future__ import annotations
@@ -31,6 +34,7 @@ from shapely.ops import transform as shp_transform
 
 from cloudlift.io import geotiff
 from cloudlift.io.aoi import AOI
+from cloudlift.io.radiometry import DEFAULT_BANDS, band_indexes
 
 
 @dataclass
@@ -160,3 +164,65 @@ class SyntheticSource(LocalFolderSource):
     def list_scenes(self, aoi: AOI | None = None) -> list[Scene]:
         self.ensure()
         return super().list_scenes(aoi)
+
+
+UPLOAD_ROLES = {"liss4": 3, "sar": 2, "reference": 3, "dem": 1}  # role -> expected band count
+
+
+class UploadError(ValueError):
+    pass
+
+
+def save_scene(root: str | Path, blobs: dict[str, bytes], meta: dict[str, Any] | None = None) -> Scene:
+    """Store user-supplied GeoTIFFs as a ``LocalFolderSource`` scene named by content hash.
+
+    ``blobs`` maps a role (``liss4`` required; ``sar``, ``reference``, ``dem`` optional) to file
+    bytes. Each file is checked to be a georeferenced raster with the expected band count, so a
+    bad upload fails here with a clear message instead of deep inside the pipeline.
+    """
+    import hashlib
+
+    from rasterio.io import MemoryFile
+
+    blobs = {k: v for k, v in blobs.items() if v}
+    if "liss4" not in blobs:
+        raise UploadError("an optical GeoTIFF with Green, Red and NIR bands is required")
+    for role, data in blobs.items():
+        if role not in UPLOAD_ROLES:
+            raise UploadError(f"unknown file role {role!r}; expected one of {sorted(UPLOAD_ROLES)}")
+        try:
+            with MemoryFile(data) as mf, mf.open() as ds:
+                count, crs = ds.count, ds.crs
+        except Exception as e:
+            raise UploadError(f"{role}: not a readable GeoTIFF ({e})") from e
+        if crs is None:
+            raise UploadError(f"{role}: file has no coordinate reference system")
+        if count < UPLOAD_ROLES[role]:
+            raise UploadError(f"{role}: expected at least {UPLOAD_ROLES[role]} band(s), found {count}")
+        if role in ("liss4", "reference"):
+            key = "bands" if role == "liss4" or "reference_bands" not in (meta or {}) else "reference_bands"
+            try:
+                band_indexes({"bands": (meta or {}).get(key, DEFAULT_BANDS)}, count)
+            except ValueError as e:
+                raise UploadError(f"{role}: {e}") from e
+    scale = (meta or {}).get("scale", "auto")
+    if scale not in (None, "", "auto"):
+        try:
+            if float(scale) <= 0:
+                raise ValueError
+        except (TypeError, ValueError) as e:
+            raise UploadError(f"scale must be 'auto' or a positive number, got {scale!r}") from e
+    h = hashlib.sha256()
+    for k in sorted(blobs):
+        h.update(k.encode())
+        h.update(hashlib.sha256(blobs[k]).digest())
+    meta = {k: v for k, v in (meta or {}).items() if v not in (None, "")}
+    h.update(json.dumps(meta, sort_keys=True).encode())
+    sid = f"UPLOAD_{h.hexdigest()[:12]}"
+    d = Path(root) / sid
+    d.mkdir(parents=True, exist_ok=True)
+    for role, data in blobs.items():
+        (d / f"{role}.tif").write_bytes(data)
+    if meta:
+        (d / "meta.json").write_text(json.dumps(meta, indent=2), encoding="utf-8")
+    return LocalFolderSource(root).get_scene(sid)
