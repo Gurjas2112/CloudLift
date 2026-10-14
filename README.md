@@ -1,6 +1,6 @@
 # CloudLift
 
-**Generative AI cloud removal and surface reconstruction for LISS-IV imagery**: Bharatiya Antariksh Hackathon 2026, PS-2.
+**Generative AI cloud removal and surface reconstruction for LISS-IV imagery**:
 
 CloudLift removes cloud and cloud shadow from **LISS-IV** (ResourceSat-2/2A, 5.8 m, Green/Red/NIR)
 scenes and writes **analysis-ready, cloud-free GeoTIFFs**. It fuses the cloudy pass with
@@ -24,7 +24,6 @@ free CPU hardware. Four synthetic hero scenes replay instantly from the build-ti
 
 | Item | State |
 |---|---|
-| 10-phase build (`AGENT_PROMPT.md`) | complete; `pytest` green on CPU and on the RTX 3060 |
 | Real Bhoonidhi LISS-IV / EOS-04 data | **not included.** Drop scenes in `data/raw/` (convention below) |
 | Pretrained SEN12MS-CR-TS UnCRtainTS weights | **not included.** The loader + 3-band adapter are tested; put the `.pth.tar` in `checkpoints/` |
 | Shipped weights `assets/weights/cloudlift_synthetic_full_v1.pt` | full UnCRtainTS fine-tuned **only on synthetic pairs**; demo use only (see `MODEL_CARD.md`) |
